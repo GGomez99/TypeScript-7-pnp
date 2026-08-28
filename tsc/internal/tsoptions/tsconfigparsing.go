@@ -576,7 +576,12 @@ func getExtendsConfigPath(
 		return extendedConfigPath, errors
 	}
 	// If the path isn't a rooted or relative path, resolve like a module
-	resolverHost := &resolverHost{host}
+	resolverHost := &resolverHost{ParseConfigHost: host}
+	if host, ok := host.(interface {
+		PnpApiForPath(fileName string) *pnp.PnpApi
+	}); ok {
+		resolverHost.pnpApi = host.PnpApiForPath(tspath.CombinePaths(basePath, "tsconfig.json"))
+	}
 	if resolved := module.ResolveConfig(extendedConfig, tspath.CombinePaths(basePath, "tsconfig.json"), resolverHost); resolved.IsResolved() {
 		return resolved.ResolvedFileName, errors
 	}
@@ -721,9 +726,17 @@ type ParseConfigHost interface {
 
 type resolverHost struct {
 	ParseConfigHost
+	pnpApi *pnp.PnpApi
 }
 
 func (r *resolverHost) Trace(msg string) {}
+
+func (r *resolverHost) PnpApi() *pnp.PnpApi {
+	if r.pnpApi != nil {
+		return r.pnpApi
+	}
+	return r.ParseConfigHost.PnpApi()
+}
 
 func ParseJsonSourceFileConfigFileContent(
 	sourceFile *TsConfigSourceFile,

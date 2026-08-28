@@ -1230,8 +1230,18 @@ func (b *registryBuilder) buildProjectBucket(
 	var mu sync.Mutex
 	fileExcludePatterns := b.userPreferences.ParsedAutoImportFileExcludePatterns(b.host.FS().UseCaseSensitiveFileNames())
 	result.bucket = &RegistryBucket{}
-	moduleResolver := module.NewResolverWithOptions(b.host, core.EmptyCompilerOptions, "", "", b.resolverOptions)
 	program := b.host.GetProgramForProject(projectPath)
+	pnpApi := b.host.PnpApi()
+	if host, ok := b.host.(interface {
+		PnpApiForProject(tspath.Path) *pnp.PnpApi
+	}); ok {
+		pnpApi = host.PnpApiForProject(projectPath)
+	}
+	moduleResolver := module.NewResolverWithOptions(&resolutionHost{
+		fs:               b.host.FS(),
+		currentDirectory: program.GetCurrentDirectory(),
+		pnpApi:           pnpApi,
+	}, core.EmptyCompilerOptions, "", "", b.resolverOptions)
 	projectRootPath := b.base.toPath(program.GetCurrentDirectory())
 	symlinkCache := program.GetSymlinkCache()
 	getChecker, closePool, checkerCount := createCheckerPool(program)
@@ -1252,7 +1262,6 @@ func (b *registryBuilder) buildProjectBucket(
 
 		// If pnp is available, node_modules buckets won't be built as all packages are located in `.yarn/cache`
 		// This is why we need to handle all files, except the ones that are not importable in the project
-		pnpApi := b.host.PnpApi()
 		if pnpApi != nil {
 			if !pnpApi.IsImportable(string(projectPath), file.FileName()) {
 				continue

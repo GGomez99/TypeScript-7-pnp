@@ -1736,3 +1736,69 @@ export const value = content;`,
 		assert.Equal(t, defaultTSProject.Name(), "/home/projects/TS/p1/tsconfig.json", "TS file should belong to tsconfig.json project")
 	})
 }
+
+func TestProjectsSelectTheirOwnPnpApi(t *testing.T) {
+	t.Parallel()
+	if !bundled.Embedded {
+		t.Skip("bundled files are not embedded")
+	}
+
+	manifest := `const RAW_RUNTIME_STATE = '{
+		"dependencyTreeRoots": [],
+		"enableTopLevelFallback": false,
+		"fallbackPool": [],
+		"fallbackExclusionList": [],
+		"packageRegistryData": []
+	}';`
+	files := map[string]any{
+		"/workspace/one/.pnp.cjs":      manifest,
+		"/workspace/one/tsconfig.json": `{"compilerOptions":{"noLib":true},"include":["src"]}`,
+		"/workspace/one/src/index.ts":  `export const one = 1;`,
+		"/workspace/two/.pnp.cjs":      manifest,
+		"/workspace/two/tsconfig.json": `{"compilerOptions":{"noLib":true},"include":["src"]}`,
+		"/workspace/two/src/index.ts":  `export const two = 2;`,
+	}
+	session, _ := projecttestutil.Setup(files)
+	session.DidOpenFile(t.Context(), "file:///workspace/one/src/index.ts", 1, files["/workspace/one/src/index.ts"].(string), lsproto.LanguageKindTypeScript)
+	session.DidOpenFile(t.Context(), "file:///workspace/two/src/index.ts", 1, files["/workspace/two/src/index.ts"].(string), lsproto.LanguageKindTypeScript)
+
+	snapshot := session.Snapshot()
+	one := snapshot.GetDefaultProject("file:///workspace/one/src/index.ts")
+	two := snapshot.GetDefaultProject("file:///workspace/two/src/index.ts")
+	assert.Assert(t, one != nil)
+	assert.Assert(t, two != nil)
+	assert.Assert(t, one.PnpApi() != nil)
+	assert.Assert(t, two.PnpApi() != nil)
+	assert.Equal(t, one.PnpApi().GetManifestPath(), "/workspace/one/.pnp.cjs")
+	assert.Equal(t, two.PnpApi().GetManifestPath(), "/workspace/two/.pnp.cjs")
+}
+
+func TestConfigExtendsUsesProjectPnpApi(t *testing.T) {
+	t.Parallel()
+	if !bundled.Embedded {
+		t.Skip("bundled files are not embedded")
+	}
+
+	manifest := `const RAW_RUNTIME_STATE = '{
+		"dependencyTreeRoots": [{"name":"app","reference":"workspace:."}],
+		"enableTopLevelFallback": false,
+		"fallbackPool": [],
+		"fallbackExclusionList": [],
+		"packageRegistryData": [
+			["app", [["workspace:.", {"packageLocation":"./","packageDependencies":[["shared-config","workspace:config"]],"linkType":"SOFT"}]]],
+			["shared-config", [["workspace:config", {"packageLocation":"./config-package/","packageDependencies":[],"linkType":"SOFT"}]]]
+		]
+	}';`
+	files := map[string]any{
+		"/workspace/app/.pnp.cjs":                     manifest,
+		"/workspace/app/tsconfig.json":                `{"extends":"shared-config/tsconfig.json","compilerOptions":{"noLib":true},"include":["src"]}`,
+		"/workspace/app/src/index.tsx":                `export const app = <div />;`,
+		"/workspace/app/config-package/tsconfig.json": `{"compilerOptions":{"jsx":"react"}}`,
+	}
+	session, _ := projecttestutil.Setup(files)
+	session.DidOpenFile(t.Context(), "file:///workspace/app/src/index.tsx", 1, files["/workspace/app/src/index.tsx"].(string), lsproto.LanguageKindTypeScript)
+
+	project := session.Snapshot().GetDefaultProject("file:///workspace/app/src/index.tsx")
+	assert.Assert(t, project != nil)
+	assert.Equal(t, project.GetProgram().Options().Jsx, core.JsxEmitReact)
+}

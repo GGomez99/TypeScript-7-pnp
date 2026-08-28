@@ -11,6 +11,7 @@ import (
 	"github.com/microsoft/TypeScript/tsc/internal/pnp"
 	"github.com/microsoft/TypeScript/tsc/internal/tspath"
 	"github.com/microsoft/TypeScript/tsc/internal/vfs"
+	"github.com/microsoft/TypeScript/tsc/internal/vfs/pnpvfs"
 )
 
 type autoImportBuilderFS struct {
@@ -89,7 +90,7 @@ func newAutoImportRegistryCloneHost(
 	return &autoImportRegistryCloneHost{
 		projectCollection: projectCollection,
 		parseCache:        parseCache,
-		fs:                newSourceFS(false, &autoImportBuilderFS{snapshotFSBuilder: snapshotFSBuilder}, toPath),
+		fs:                newSourceFSWithFS(false, &autoImportBuilderFS{snapshotFSBuilder: snapshotFSBuilder}, toPath, pnpvfs.From(snapshotFSBuilder.fs)),
 		pnpApi:            pnpApi,
 		currentDirectory:  currentDirectory,
 	}
@@ -108,6 +109,18 @@ func (a *autoImportRegistryCloneHost) GetCurrentDirectory() string {
 // PnpApi implements autoimport.RegistryCloneHost.
 func (a *autoImportRegistryCloneHost) PnpApi() *pnp.PnpApi {
 	return a.pnpApi
+}
+
+// PnpApiForProject returns the API selected for a particular project. The
+// RegistryCloneHost interface retains PnpApi for global callers that have no
+// project context, while project-index construction uses this method when it
+// is available.
+func (a *autoImportRegistryCloneHost) PnpApiForProject(projectPath tspath.Path) *pnp.PnpApi {
+	project := a.projectCollection.GetProjectByPath(projectPath)
+	if project == nil {
+		return nil
+	}
+	return project.PnpApi()
 }
 
 // GetDefaultProject implements autoimport.RegistryCloneHost.

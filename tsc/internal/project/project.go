@@ -14,10 +14,12 @@ import (
 	"github.com/microsoft/TypeScript/tsc/internal/core"
 	"github.com/microsoft/TypeScript/tsc/internal/ls"
 	"github.com/microsoft/TypeScript/tsc/internal/lsp/lsproto"
+	"github.com/microsoft/TypeScript/tsc/internal/pnp"
 	"github.com/microsoft/TypeScript/tsc/internal/project/ata"
 	"github.com/microsoft/TypeScript/tsc/internal/project/logging"
 	"github.com/microsoft/TypeScript/tsc/internal/tsoptions"
 	"github.com/microsoft/TypeScript/tsc/internal/tspath"
+	"github.com/microsoft/TypeScript/tsc/internal/vfs/pnpvfs"
 )
 
 const (
@@ -59,6 +61,7 @@ type Project struct {
 	currentDirectory string
 	configFileName   string
 	configFilePath   tspath.Path
+	pnpApi           *pnp.PnpApi
 
 	dirty         bool
 	dirtyFilePath tspath.Path
@@ -165,6 +168,7 @@ func NewProject(
 		currentDirectory: currentDirectory,
 		dirty:            true,
 	}
+	project.pnpApi = pnp.InitPnpApi(pnpvfs.From(builder.fs.fs), currentDirectory)
 
 	project.configFilePath = tspath.ToPath(configFileName, currentDirectory, builder.fs.fs.UseCaseSensitiveFileNames())
 	project.programFilesWatch = NewWatchedFiles(
@@ -189,7 +193,7 @@ func NewProject(
 		builder.sessionOptions.CurrentDirectory,
 		builder.fs.fs.UseCaseSensitiveFileNames(),
 	)
-	if builder.pnpApi != nil {
+	if project.pnpApi != nil {
 		project.pnpManifestWatch = NewWatchedFiles(
 			"pnp manifest files for "+configFileName,
 			lsproto.WatchKindChange,
@@ -219,6 +223,11 @@ func (p *Project) DisplayName(cwd string) string {
 
 func (p *Project) ID() tspath.Path {
 	return p.configFilePath
+}
+
+// PnpApi returns the immutable PnP API selected for this project.
+func (p *Project) PnpApi() *pnp.PnpApi {
+	return p.pnpApi
 }
 
 // ConfigFileName panics if Kind() is not KindConfigured.
@@ -278,6 +287,7 @@ func (p *Project) Clone() *Project {
 		currentDirectory: p.currentDirectory,
 		configFileName:   p.configFileName,
 		configFilePath:   p.configFilePath,
+		pnpApi:           p.pnpApi,
 
 		dirty:         p.dirty,
 		dirtyFilePath: p.dirtyFilePath,

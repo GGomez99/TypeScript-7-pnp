@@ -15,6 +15,7 @@ import (
 	"github.com/microsoft/TypeScript/tsc/internal/tsoptions"
 	"github.com/microsoft/TypeScript/tsc/internal/tspath"
 	"github.com/microsoft/TypeScript/tsc/internal/vfs"
+	"github.com/microsoft/TypeScript/tsc/internal/vfs/pnpvfs"
 )
 
 var (
@@ -57,7 +58,7 @@ func newConfigFileRegistryBuilder(
 ) *configFileRegistryBuilder {
 	return &configFileRegistryBuilder{
 		hasRelativePatternCapability: hasRelativePatternCapability,
-		fs:                           newSourceFS(false, fs, fs.toPath),
+		fs:                           newSourceFSWithFS(false, fs, fs.toPath, pnpvfs.From(fs.fs)),
 		isOpenFile:                   fs.isOpenFile,
 		base:                         oldConfigFileRegistry,
 		sessionOptions:               sessionOptions,
@@ -780,6 +781,12 @@ func (c *configFileRegistryBuilder) GetCurrentDirectory() string {
 // PnpApi implements tsoptions.ParseConfigHost.
 func (c *configFileRegistryBuilder) PnpApi() *pnp.PnpApi {
 	return c.pnpApi
+}
+
+// PnpApiForPath selects the manifest for the config file's issuer directory.
+// PnpApi remains the session-level fallback for context-free consumers.
+func (c *configFileRegistryBuilder) PnpApiForPath(fileName string) *pnp.PnpApi {
+	return pnp.InitPnpApi(c.fs, fileName)
 }
 
 // GetExtendedConfig implements tsoptions.ExtendedConfigCache.

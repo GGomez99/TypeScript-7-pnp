@@ -171,6 +171,18 @@ func (s *Snapshot) PnpApi() *pnp.PnpApi {
 	return s.pnpApi
 }
 
+// PnpApiForPath returns the API belonging to the project that owns fileName,
+// falling back to the session API for files without a project context.
+func (s *Snapshot) PnpApiForPath(fileName string) *pnp.PnpApi {
+	path := s.toPath(fileName)
+	if project := s.ProjectCollection.GetDefaultProject(path); project != nil {
+		if pnpApi := project.PnpApi(); pnpApi != nil {
+			return pnpApi
+		}
+	}
+	return s.pnpApi
+}
+
 func (s *Snapshot) ReadFile(fileName string) (string, bool) {
 	handle := s.GetFile(fileName)
 	if handle == nil {

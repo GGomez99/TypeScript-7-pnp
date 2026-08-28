@@ -724,13 +724,19 @@ type sourceFS struct {
 	missingDirectories *collections.SyncSet[tspath.Path]
 	seenFiles          *collections.SyncSet[tspath.Path]
 	source             FileSource
+	fileSystem         vfs.FS
 }
 
 func newSourceFS(tracking bool, source FileSource, toPath func(fileName string) tspath.Path) *sourceFS {
+	return newSourceFSWithFS(tracking, source, toPath, nil)
+}
+
+func newSourceFSWithFS(tracking bool, source FileSource, toPath func(fileName string) tspath.Path, fileSystem vfs.FS) *sourceFS {
 	fs := &sourceFS{
-		tracking: tracking,
-		toPath:   toPath,
-		source:   source,
+		tracking:   tracking,
+		toPath:     toPath,
+		source:     source,
+		fileSystem: fileSystem,
 	}
 	if tracking {
 		fs.seenFiles = &collections.SyncSet[tspath.Path]{}
@@ -781,17 +787,33 @@ func (fs *sourceFS) SeenFileOrMissingParentDirectory(path tspath.Path) bool {
 
 func (fs *sourceFS) GetFile(fileName string) FileHandle {
 	fs.Track(fileName)
-	return fs.source.GetFile(fileName)
+	return fs.getFile(fileName, fs.toPath(fileName))
 }
 
 func (fs *sourceFS) GetFileByPath(fileName string, path tspath.Path) FileHandle {
 	fs.Track(fileName)
-	return fs.source.GetFileByPath(fileName, path)
+	return fs.getFile(fileName, path)
+}
+
+func (fs *sourceFS) getFile(fileName string, path tspath.Path) FileHandle {
+	if file := fs.source.GetFileByPath(fileName, path); file != nil {
+		return file
+	}
+	if fs.fileSystem != nil {
+		if contents, ok := fs.fileSystem.ReadFile(fileName); ok {
+			return newDiskFile(fileName, contents)
+		}
+	}
+	return nil
 }
 
 // DirectoryExists implements vfs.FS.
 func (fs *sourceFS) DirectoryExists(path string) bool {
-	exists := fs.source.FS().DirectoryExists(path)
+	fileSystem := fs.source.FS()
+	if fs.fileSystem != nil {
+		fileSystem = fs.fileSystem
+	}
+	exists := fileSystem.DirectoryExists(path)
 	if !exists && fs.tracking {
 		fs.missingDirectories.Add(fs.toPath(path))
 	}
@@ -801,12 +823,43 @@ func (fs *sourceFS) DirectoryExists(path string) bool {
 // FileExists implements vfs.FS.
 func (fs *sourceFS) FileExists(path string) bool {
 	fs.Track(path)
-	return fs.source.FileExists(path, fs.toPath(path))
+	if fs.source.FileExists(path, fs.toPath(path)) {
+		return true
+	}
+	return fs.fileSystem != nil && fs.fileSystem.FileExists(path)
 }
 
 // GetAccessibleEntries implements vfs.FS.
 func (fs *sourceFS) GetAccessibleEntries(path string) vfs.Entries {
-	return fs.source.GetAccessibleEntries(path)
+	entries := fs.source.GetAccessibleEntries(path)
+	if fs.fileSystem == nil {
+		return entries
+	}
+	overrideEntries := fs.fileSystem.GetAccessibleEntries(path)
+	seenFiles := make(map[string]struct{}, len(entries.Files)+len(overrideEntries.Files))
+	seenDirectories := make(map[string]struct{}, len(entries.Directories)+len(overrideEntries.Directories))
+	for _, name := range entries.Files {
+		seenFiles[name] = struct{}{}
+	}
+	for _, name := range entries.Directories {
+		seenDirectories[name] = struct{}{}
+	}
+	for _, name := range overrideEntries.Files {
+		if _, ok := seenFiles[name]; !ok {
+			entries.Files = append(entries.Files, name)
+			seenFiles[name] = struct{}{}
+		}
+	}
+	for _, name := range overrideEntries.Directories {
+		if _, ok := seenDirectories[name]; !ok {
+			entries.Directories = append(entries.Directories, name)
+			seenDirectories[name] = struct{}{}
+		}
+	}
+	if entries.Symlinks == nil {
+		entries.Symlinks = overrideEntries.Symlinks
+	}
+	return entries
 }
 
 // ReadFile implements vfs.FS.
@@ -819,11 +872,17 @@ func (fs *sourceFS) ReadFile(path string) (contents string, ok bool) {
 
 // Realpath implements vfs.FS.
 func (fs *sourceFS) Realpath(path string) string {
+	if fs.fileSystem != nil {
+		return fs.fileSystem.Realpath(path)
+	}
 	return fs.source.FS().Realpath(path)
 }
 
 // Stat implements vfs.FS.
 func (fs *sourceFS) Stat(path string) vfs.FileInfo {
+	if fs.fileSystem != nil {
+		return fs.fileSystem.Stat(path)
+	}
 	return fs.source.FS().Stat(path)
 }
 
@@ -834,6 +893,9 @@ func (fs *sourceFS) UseCaseSensitiveFileNames() bool {
 
 // WalkDir implements vfs.FS.
 func (fs *sourceFS) WalkDir(root string, walkFn vfs.WalkDirFunc) error {
+	if fs.fileSystem != nil {
+		return fs.fileSystem.WalkDir(root, walkFn)
+	}
 	return fs.source.FS().WalkDir(root, walkFn)
 }
 

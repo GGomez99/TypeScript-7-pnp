@@ -13,6 +13,7 @@ import (
 	"github.com/microsoft/TypeScript/tsc/internal/tsoptions"
 	"github.com/microsoft/TypeScript/tsc/internal/tspath"
 	"github.com/microsoft/TypeScript/tsc/internal/vfs"
+	"github.com/microsoft/TypeScript/tsc/internal/vfs/pnpvfs"
 	"github.com/zeebo/xxh3"
 )
 
@@ -40,13 +41,16 @@ func newCompilerHost(
 	builder *ProjectCollectionBuilder,
 	logger *logging.LogTree,
 ) *compilerHost {
+	// A rebuilt project gets a fresh immutable API from its own issuer
+	// directory. Existing snapshots keep the API pointer they were built with.
+	project.pnpApi = pnp.InitPnpApi(pnpvfs.From(builder.fs.fs), currentDirectory)
 	return &compilerHost{
 		configFilePath:   project.configFilePath,
 		currentDirectory: currentDirectory,
 		sessionOptions:   builder.sessionOptions,
 
-		pnpApi:   builder.pnpApi,
-		sourceFS: newSourceFS(true, builder.fs, builder.toPath),
+		pnpApi:   project.pnpApi,
+		sourceFS: newSourceFSWithFS(true, builder.fs, builder.toPath, pnpvfs.From(builder.fs.fs)),
 
 		project: project,
 		builder: builder,
@@ -61,6 +65,7 @@ func (c *compilerHost) freeze(snapshotFS *SnapshotFS, configFileRegistry *Config
 		panic("freeze can only be called once")
 	}
 	c.sourceFS.source = snapshotFS
+	c.sourceFS.fileSystem = pnpvfs.From(snapshotFS.fs)
 	c.sourceFS.DisableTracking()
 	c.configFileRegistry = configFileRegistry
 	c.builder = nil

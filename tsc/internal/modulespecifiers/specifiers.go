@@ -12,9 +12,21 @@ import (
 	"github.com/microsoft/TypeScript/tsc/internal/module"
 	"github.com/microsoft/TypeScript/tsc/internal/outputpaths"
 	"github.com/microsoft/TypeScript/tsc/internal/packagejson"
+	"github.com/microsoft/TypeScript/tsc/internal/pnp"
 	"github.com/microsoft/TypeScript/tsc/internal/stringutil"
 	"github.com/microsoft/TypeScript/tsc/internal/tspath"
 )
+
+type pnpApiForPathHost interface {
+	PnpApiForPath(fileName string) *pnp.PnpApi
+}
+
+func getPnpApi(host ModuleSpecifierGenerationHost, fileName string) *pnp.PnpApi {
+	if host, ok := host.(pnpApiForPathHost); ok {
+		return host.PnpApiForPath(fileName)
+	}
+	return host.PnpApi()
+}
 
 func GetModuleSpecifiers(
 	moduleSymbol *ast.Symbol,
@@ -286,7 +298,7 @@ func GetEachFileNameOfModule(
 		for _, p := range targets {
 			if !(shouldFilterIgnoredPaths && containsIgnoredPath(p)) {
 				IsInNodeModules := ContainsNodeModules(p)
-				if pnpApi := host.PnpApi(); pnpApi != nil {
+				if pnpApi := getPnpApi(host, importingFileName); pnpApi != nil {
 					IsInNodeModules = IsInNodeModules || pnpApi.IsInPnpModule(p, importingFileName)
 				}
 
@@ -350,7 +362,7 @@ func GetEachFileNameOfModule(
 		for _, p := range targets {
 			if !(shouldFilterIgnoredPaths && containsIgnoredPath(p)) {
 				IsInNodeModules := ContainsNodeModules(p)
-				if pnpApi := host.PnpApi(); pnpApi != nil {
+				if pnpApi := getPnpApi(host, importingFileName); pnpApi != nil {
 					IsInNodeModules = IsInNodeModules || pnpApi.IsInPnpModule(p, importingFileName)
 				}
 
@@ -761,7 +773,7 @@ func tryGetModuleNameAsPnpPackage(
 	packageNameOnly bool,
 	overrideMode core.ResolutionMode,
 ) string {
-	pnpApi := host.PnpApi()
+	pnpApi := getPnpApi(host, importingSourceFile.FileName())
 	if pnpApi == nil {
 		return ""
 	}

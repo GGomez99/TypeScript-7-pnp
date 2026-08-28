@@ -32,6 +32,7 @@ import (
 	"github.com/microsoft/TypeScript/tsc/internal/project/logging"
 	"github.com/microsoft/TypeScript/tsc/internal/tspath"
 	"github.com/microsoft/TypeScript/tsc/internal/vfs"
+	"github.com/microsoft/TypeScript/tsc/internal/vfs/pnpvfs"
 )
 
 type UpdateReason int
@@ -89,7 +90,6 @@ type SessionInit struct {
 	Client        Client
 	Logger        logging.Logger
 	NpmExecutor   ata.NpmExecutor
-	PnpApi        *pnp.PnpApi
 	// Spawner launches content mapper processes. It is nil when the host cannot spawn processes.
 	Spawner                 contentmapper.Spawner
 	ContentMapperLogger     contentmapper.Logger
@@ -233,11 +233,18 @@ func newContentMapperHost(init *SessionInit) contentmapper.Host {
 
 func NewSession(init *SessionInit) *Session {
 	currentDirectory := init.Options.CurrentDirectory
-	useCaseSensitiveFileNames := init.FS.UseCaseSensitiveFileNames()
+	fs := init.FS
+	// Keep a cwd-based API for hosts that do not have a project context yet.
+	// Project-specific hosts select their own API when the project is created.
+	pnpApi := pnp.InitPnpApi(fs, currentDirectory)
+	if pnpApi != nil {
+		fs = pnpvfs.From(fs)
+	}
+	useCaseSensitiveFileNames := fs.UseCaseSensitiveFileNames()
 	toPath := func(fileName string) tspath.Path {
 		return tspath.ToPath(fileName, currentDirectory, useCaseSensitiveFileNames)
 	}
-	overlayFS := newOverlayFS(init.FS, make(map[tspath.Path]*Overlay), init.Options.PositionEncoding, toPath)
+	overlayFS := newOverlayFS(fs, make(map[tspath.Path]*Overlay), init.Options.PositionEncoding, toPath)
 	parseCache := init.ParseCache
 	if parseCache == nil {
 		parseCache = NewParseCache(RefCountCacheOptions{})
@@ -261,7 +268,7 @@ func NewSession(init *SessionInit) *Session {
 		npmExecutor:             init.NpmExecutor,
 		contentMapperHost:       newContentMapperHost(init),
 		fs:                      overlayFS,
-		pnpApi:                  init.PnpApi,
+		pnpApi:                  pnpApi,
 		parseCache:              parseCache,
 		contentMappedParseCache: contentMappedParseCache,
 		extendedConfigCache:     extendedConfigCache,
@@ -272,7 +279,7 @@ func NewSession(init *SessionInit) *Session {
 			uint64(0),
 			&SnapshotFS{
 				toPath: toPath,
-				fs:     init.FS,
+				fs:     fs,
 			},
 			init.Options,
 			&ConfigFileRegistry{},
@@ -295,7 +302,7 @@ func NewSession(init *SessionInit) *Session {
 				},
 			),
 			toPath,
-			init.PnpApi,
+			pnpApi,
 		),
 		initialUserPreferences:   lsutil.NewDefaultUserPreferences(),
 		workspaceUserPreferences: lsutil.NewDefaultUserPreferences(),
@@ -504,7 +511,7 @@ func (s *Session) DidChangeWatchedFiles(ctx context.Context, changes []*lsproto.
 		case lsproto.FileChangeTypeCreated:
 			kind = FileChangeKindWatchCreate
 		case lsproto.FileChangeTypeChanged:
-			if s.pnpApi != nil && strings.HasSuffix(change.Uri.FileName(), ".pnp.cjs") {
+			if strings.HasSuffix(change.Uri.FileName(), ".pnp.cjs") {
 				kind = FileChangeKindPnpInstall
 			} else {
 				kind = FileChangeKindWatchChange
